@@ -63,5 +63,93 @@ ChatClient.send("*", str, function(username, target, msage) {});
 ```
 其它一些公共代码：
 ```
+function ChatClient() {
+    
+}
+
+ChatClient.queryEntry = function(uid, callback) {
+    var route = 'gate.gateHandler.queryEntry';
+    pomelo.init({
+        host: ChatClient.hostname,
+        port: 3014,
+        log: true
+    }, function() {
+        pomelo.request(route, {
+            uid: uid
+        }, function(data) {
+            pomelo.disconnect();
+            if(data.code === 500) {
+                return;
+            }
+            callback(data.host, data.port);
+        });
+    });
+}
+
+ChatClient.login = function(hostname, username, rid, callback) {
+    ChatClient.hostname = hostname;
+    
+    ChatClient.queryEntry(username, function(host, port) {
+        pomelo.init({
+            host: host,
+            port: port,
+            log: true
+        }, function() {
+            var route = "connector.entryHandler.enter";
+            pomelo.request(route, {
+                username: username,
+                rid: rid
+            }, function(data) {
+                if(data.error) {
+                    return;
+                }
+                callback(data);
+                ChatClient.rid = rid;
+                ChatClient.username = username;                
+            });
+        });
+    });
+}
+
+ChatClient.send = function(target, msg, callback) {
+    var rid = ChatClient.rid;
+    var username = ChatClient.username;
+    var route = "chat.chatHandler.send";
+    
+    pomelo.request(route, {
+                rid: rid,
+                content: msg,
+                from: username,
+                target: target
+            }, function(data) {
+                if(target != '*' && target != username) {
+                    callback(username, target, msg);
+                }
+    });
+}
+
+ChatClient.addEventListeners = function(win) {
+    var list = win.find("list-view");
+    function onChatMessage(data) {
+        var str = data.target === "*" ? data.msg : data.target + ":" + data.msg;
+        if(data.from !== win.username) {
+            list.addLeftItem("images/logos/facebook.png", data.from, str);
+        }
+    }
+    
+    function onUserEnter(data) {
+        list.addCenterItem(data.user + ' joined');
+    }
+    
+    function onUserLeft(data) {
+        list.addCenterItem(data.user + ' left');
+    }
+    
+    pomelo.on('onChat', onChatMessage);
+    pomelo.on('onAdd', onUserEnter);
+    pomelo.on('onLeave', onUserLeft);
+}
+
+require('boot');
 ```
 
