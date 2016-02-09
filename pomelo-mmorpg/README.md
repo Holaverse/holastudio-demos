@@ -1,13 +1,11 @@
-用hola studio实现微信风格的聊天软件(Pomelo版)。
----------------------------------------------
+多人在线游戏是很复杂的，直到最近看到agar.io，原来多人在线游戏也可以这么简单（至少实现一个DEMO不难）。趁过年期间有点空隙，花了两个小时写个DEMO，供有兴趣的朋友参考。
 
-为了简化起见，服务器端完全用[Pomelo](https://github.com/NetEase/pomelo/wiki/Chat%E6%BA%90%E7%A0%81%E4%B8%8B%E8%BD%BD%E4%B8%8E%E5%AE%89%E8%A3%85)的DEMO了。
+为了简化起见，服务器端完全用[Pomelo](https://github.com/NetEase/pomelo/wiki/Chat%E6%BA%90%E7%A0%81%E4%B8%8B%E8%BD%BD%E4%B8%8E%E5%AE%89%E8%A3%85)的DEMO了。服务器我们不做任何修改，用聊天的消息作为同步游戏状态的载体。
 
 1.先实现登录界面。这个很简单，放三个编辑器，分别用来输入服务器、聊天室和用户名，再放一个按钮用来登录就行了。
 
-![login](https://raw.githubusercontent.com/Holaverse/holastudio-demos/master/pomelo-chat/pomelo_chat_login.png)
+![login](https://raw.githubusercontent.com/Holaverse/holastudio-demos/master/pomelo-mmorpg/login.png)
 
-登录的实现代码：
 ```
 var hostname = this.win.getValueOf("hostname");
 var roomname = this.win.getValueOf("roomname");
@@ -24,44 +22,114 @@ var initData = {
 
 function onLogin(data) {
     initData.data = data;
-    this.openWindow("chat", null, true, initData);
+    this.openWindow("win-main", null, true, initData);
 }
 
 ChatClient.login(hostname, username, roomname, onLogin.bind(this));
-
 ```
 
-2.聊天界面。聊天界面需要自定义控件[请参考](https://github.com/Holaverse/holastudio-components/tree/master/wechat)。在[socket.io的例子](https://github.com/Holaverse/holastudio-demos/tree/master/websocket-chat)也有改进版本，这里就不多说了。
+2.实现游戏场景。这里只是一个空的场景，每个玩家进入后可以通过虚拟摇杆移动自己。虚拟摇杆的实现请参考[https://github.com/Holaverse/holastudio-components/tree/master/joystick](https://github.com/Holaverse/holastudio-components/tree/master/joystick)。
 
-![chat](https://raw.githubusercontent.com/Holaverse/holastudio-demos/master/pomelo-chat/pomelo_chat.png)
+![scene](https://raw.githubusercontent.com/Holaverse/holastudio-demos/master/pomelo-mmorpg/scene.png)
 
 
-打开聊天窗口时，注册相关事件。
+创建一个js文件main-scene.js，把公共代码放到里面：
 ```
-this.username = initData.username;
-this.roomname = initData.roomname;
+function MainScene() {
+    
+}
 
-var str = this.roomname + "(" + this.username + ")";
-this.setValueOf("title", str);
-ChatClient.addEventListeners(this);
-```
+//玩家离开时，把Ta场景中删除。
+MainScene.onUserLeft = function(data) {
+    var win = MainScene.win;
+    var figure = win.find(data.user);
+    if(figure) {
+        figure.remove(true, true);
+    }
+}
 
-编辑器onChanged事件发送消息：
-```
-if(!value) {
+//其他玩家加入时，在自己的场景中创建新玩家的角色，同时在新玩家的场景中更新自己的位置。
+MainScene.onUserEnter = function(data) {
+    var win = MainScene.win;
+    var newPlayer = win.dupChild("figure");
+    newPlayer.setPosition(0, 0).setText(data.user).setName(data.user);
+    
+    var figure = MainScene.figure;
+    MainScene.update(figure.x, figure.y, figure.getRotation());
+}
+
+//其他玩家位置移动时，更新该玩家在自己的场景中的位置。
+MainScene.onMessage = function(data) {
+    var win = MainScene.win;
+    var figureState = JSON.parse(data.msg);
+    
+    if(figureState.type === "update-state") {
+        var figure = win.find(figureState.name);
+        if(figure) {
+            figure.setPosition(figureState.x, figureState.y).setRotation(figureState.angle);
+        }
+    }
+}
+
+//自己的位置有变化时，通知其它玩家更新。
+MainScene.update = function(x, y, angle) {
+    var figureState = {type:"update-state", name:MainScene.username, x:x, y:y, angle:angle};
+    ChatClient.send("*", JSON.stringify(figureState), function(username, target, msage) {});
+    
     return;
 }
 
-var str = value;
-var win = this.win;
-var list = win.find("list-view");
+//通过虚拟摇杆移动自己的位置。
+MainScene.onJoyStickKeyPressed = function(args) {
+    var dx = args.dx*2;
+    var dy = args.dy*2;
+    var angle = args.angle*Math.PI/180;
+    
+    var x = MainScene.figure.x + dx;
+    var y = MainScene.figure.y + dy;
+    
+    MainScene.update(x, y, angle);
+}
 
-this.setText("");
-list.addRightItem("images/logos/holaverse-32.jpg", win.username, str);     
-ChatClient.send("*", str, function(username, target, msage) {});
+//初始化时，创建自己和场景中已经有的玩家。
+MainScene.init = function(win, initData) {
+    MainScene.win = win;
+    MainScene.username = initData.username;
+    MainScene.roomname = initData.roomname;
+    
+    MainScene.figure = win.dupChild("figure");
+    MainScene.figure.setName(MainScene.username).setText(MainScene.username);
+    
+    pomelo.on('onChat', MainScene.onMessage.bind(MainScene));
+    pomelo.on('onAdd', MainScene.onUserEnter.bind(MainScene));
+    pomelo.on('onLeave', MainScene.onUserLeft.bind(MainScene));
+
+    var users = initData.data.users;
+    for(var i = 0; i < users.length; i++) {
+        var name = users[i];
+        if(name === MainScene.username) continue;
+        var figure = win.dupChild("figure");
+        figure.setName(name).setText(name);
+    }
+    
+    MainScene.update(0, 0, 0);
+    
+    return;
+}
 
 ```
-其它一些公共代码：
+
+在场景的onOpen函数中：
+```
+MainScene.init(this, initData);
+```
+
+在摇杆的onKeyPressed事件中：
+```
+MainScene.onJoyStickKeyPressed(args);
+```
+
+还有几个对pomelo的包装函数，放到client.js中：
 ```
 function ChatClient() {
     
@@ -128,28 +196,8 @@ ChatClient.send = function(target, msg, callback) {
     });
 }
 
-ChatClient.addEventListeners = function(win) {
-    var list = win.find("list-view");
-    function onChatMessage(data) {
-        var str = data.target === "*" ? data.msg : data.target + ":" + data.msg;
-        if(data.from !== win.username) {
-            list.addLeftItem("images/logos/facebook.png", data.from, str);
-        }
-    }
-    
-    function onUserEnter(data) {
-        list.addCenterItem(data.user + ' joined');
-    }
-    
-    function onUserLeft(data) {
-        list.addCenterItem(data.user + ' left');
-    }
-    
-    pomelo.on('onChat', onChatMessage);
-    pomelo.on('onAdd', onUserEnter);
-    pomelo.on('onLeave', onUserLeft);
-}
-
 require('boot');
 ```
 
+3.最后还要在项目中引用pomelo的库，它的位置取决于pomelo服务器的名称了，我的pomelo安装在本机：
+http://192.168.168.108:3001/js/lib/build/build.js
